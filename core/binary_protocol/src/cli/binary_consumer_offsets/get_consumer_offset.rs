@@ -34,17 +34,18 @@ impl GetConsumerOffsetCmd {
         consumer_id: Identifier,
         stream_id: Identifier,
         topic_id: Identifier,
-        partition_id: u32,
+        partition_id: Option<u32>,
+        consumer_kind: ConsumerKind,
     ) -> Self {
         Self {
             get_consumer_offset: GetConsumerOffset {
                 consumer: Consumer {
-                    kind: ConsumerKind::Consumer,
+                    kind: consumer_kind,
                     id: consumer_id,
                 },
                 stream_id,
                 topic_id,
-                partition_id: Some(partition_id),
+                partition_id,
             },
         }
     }
@@ -65,25 +66,50 @@ impl GetConsumerOffsetCmd {
 #[async_trait]
 impl CliCommand for GetConsumerOffsetCmd {
     fn explain(&self) -> String {
-        format!(
-            "get consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
-            self.get_consumer_info(),
-            self.get_consumer_offset.stream_id,
-            self.get_consumer_offset.topic_id,
-            self.get_consumer_offset.partition_id.unwrap(),
-        )
+        match self.get_consumer_offset.partition_id {
+            Some(partition_id) => format!(
+                "get consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
+                self.get_consumer_info(),
+                self.get_consumer_offset.stream_id,
+                self.get_consumer_offset.topic_id,
+                partition_id,
+            ),
+            None => format!(
+                "get consumer offset for {} for stream with ID: {} and topic with ID: {}",
+                self.get_consumer_info(),
+                self.get_consumer_offset.stream_id,
+                self.get_consumer_offset.topic_id,
+            ),
+        }
     }
 
     async fn execute_cmd(&mut self, client: &dyn Client) -> anyhow::Result<(), anyhow::Error> {
         let consumer_offset = client.get_consumer_offset(&self.get_consumer_offset.consumer, &self.get_consumer_offset.stream_id, &self.get_consumer_offset.topic_id, self.get_consumer_offset.partition_id).await.with_context(|| {
-            format!(
-                "Problem getting consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
-                self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id, self.get_consumer_offset.partition_id.unwrap()
-            )
+            match self.get_consumer_offset.partition_id {
+                Some(partition_id) => format!(
+                    "Problem getting consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
+                    self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id, partition_id
+                ),
+                None => format!(
+                    "Problem getting consumer offset for {} for stream with ID: {} and topic with ID: {}",
+                    self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id
+                ),
+            }
         })?;
 
         if consumer_offset.is_none() {
-            event!(target: PRINT_TARGET, Level::INFO, "Consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} was not found", self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id, self.get_consumer_offset.partition_id.unwrap());
+            match self.get_consumer_offset.partition_id {
+                Some(partition_id) => {
+                    event!(target: PRINT_TARGET, Level::INFO,
+                        "Consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} was not found",
+                        self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id, partition_id);
+                }
+                None => {
+                    event!(target: PRINT_TARGET, Level::INFO,
+                        "Consumer offset for {} for stream with ID: {} and topic with ID: {} was not found",
+                        self.get_consumer_info(), self.get_consumer_offset.stream_id, self.get_consumer_offset.topic_id);
+                }
+            }
             return Ok(());
         }
 

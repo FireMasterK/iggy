@@ -34,20 +34,33 @@ impl SetConsumerOffsetCmd {
         consumer_id: Identifier,
         stream_id: Identifier,
         topic_id: Identifier,
-        partition_id: u32,
+        partition_id: Option<u32>,
         offset: u64,
+        consumer_kind: ConsumerKind,
     ) -> Self {
         Self {
             set_consumer_offset: StoreConsumerOffset {
                 consumer: Consumer {
-                    kind: ConsumerKind::Consumer,
+                    kind: consumer_kind,
                     id: consumer_id,
                 },
                 stream_id,
                 topic_id,
-                partition_id: Some(partition_id),
+                partition_id,
                 offset,
             },
+        }
+    }
+
+    pub fn get_consumer_info(&self) -> String {
+        match self.set_consumer_offset.consumer.kind {
+            ConsumerKind::Consumer => {
+                format!("consumer with ID: {}", self.set_consumer_offset.consumer.id)
+            }
+            ConsumerKind::ConsumerGroup => format!(
+                "consumer group with ID: {}",
+                self.set_consumer_offset.consumer.id
+            ),
         }
     }
 }
@@ -55,14 +68,23 @@ impl SetConsumerOffsetCmd {
 #[async_trait]
 impl CliCommand for SetConsumerOffsetCmd {
     fn explain(&self) -> String {
-        format!(
-            "set consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}",
-            self.set_consumer_offset.consumer.id,
-            self.set_consumer_offset.stream_id,
-            self.set_consumer_offset.topic_id,
-            self.set_consumer_offset.partition_id.unwrap(),
-            self.set_consumer_offset.offset,
-        )
+        match self.set_consumer_offset.partition_id {
+            Some(partition_id) => format!(
+                "set consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} to {}",
+                self.get_consumer_info(),
+                self.set_consumer_offset.stream_id,
+                self.set_consumer_offset.topic_id,
+                partition_id,
+                self.set_consumer_offset.offset,
+            ),
+            None => format!(
+                "set consumer offset for {} for stream with ID: {} and topic with ID: {} to {}",
+                self.get_consumer_info(),
+                self.set_consumer_offset.stream_id,
+                self.set_consumer_offset.topic_id,
+                self.set_consumer_offset.offset,
+            ),
+        }
     }
 
     async fn execute_cmd(&mut self, client: &dyn Client) -> anyhow::Result<(), anyhow::Error> {
@@ -70,20 +92,39 @@ impl CliCommand for SetConsumerOffsetCmd {
             .store_consumer_offset(&self.set_consumer_offset.consumer, &self.set_consumer_offset.stream_id, &self.set_consumer_offset.topic_id, self.set_consumer_offset.partition_id, self.set_consumer_offset.offset)
             .await
             .with_context(|| {
-                format!(
-                    "Problem setting consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
-                    self.set_consumer_offset.consumer.id, self.set_consumer_offset.stream_id, self.set_consumer_offset.topic_id, self.set_consumer_offset.partition_id.unwrap()
-                )
+                match self.set_consumer_offset.partition_id {
+                    Some(partition_id) => format!(
+                        "Problem setting consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {}",
+                        self.get_consumer_info(), self.set_consumer_offset.stream_id, self.set_consumer_offset.topic_id, partition_id
+                    ),
+                    None => format!(
+                        "Problem setting consumer offset for {} for stream with ID: {} and topic with ID: {}",
+                        self.get_consumer_info(), self.set_consumer_offset.stream_id, self.set_consumer_offset.topic_id
+                    ),
+                }
             })?;
 
-        event!(target: PRINT_TARGET, Level::INFO,
-            "Consumer offset for consumer with ID: {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}",
-            self.set_consumer_offset.consumer.id,
-            self.set_consumer_offset.stream_id,
-            self.set_consumer_offset.topic_id,
-            self.set_consumer_offset.partition_id.unwrap(),
-            self.set_consumer_offset.offset,
-        );
+        match self.set_consumer_offset.partition_id {
+            Some(partition_id) => {
+                event!(target: PRINT_TARGET, Level::INFO,
+                    "Consumer offset for {} for stream with ID: {} and topic with ID: {} and partition with ID: {} set to {}",
+                    self.get_consumer_info(),
+                    self.set_consumer_offset.stream_id,
+                    self.set_consumer_offset.topic_id,
+                    partition_id,
+                    self.set_consumer_offset.offset,
+                );
+            }
+            None => {
+                event!(target: PRINT_TARGET, Level::INFO,
+                    "Consumer offset for {} for stream with ID: {} and topic with ID: {} set to {}",
+                    self.get_consumer_info(),
+                    self.set_consumer_offset.stream_id,
+                    self.set_consumer_offset.topic_id,
+                    self.set_consumer_offset.offset,
+                );
+            }
+        }
 
         Ok(())
     }

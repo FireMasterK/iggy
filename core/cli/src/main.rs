@@ -38,7 +38,9 @@ use args::{CliOptions, IggyMergedConsoleArgs};
 use clap::Parser;
 use iggy::client_provider::{self, ClientProviderConfig};
 use iggy::clients::client::IggyClient;
-use iggy::prelude::{Aes256GcmEncryptor, Args, EncryptorKind, PersonalAccessTokenExpiry};
+use iggy::prelude::{
+    Aes256GcmEncryptor, Args, ConsumerKind, EncryptorKind, PersonalAccessTokenExpiry,
+};
 use iggy_binary_protocol::cli::binary_context::common::ContextManager;
 use iggy_binary_protocol::cli::binary_context::use_context::UseContextCmd;
 use iggy_binary_protocol::cli::binary_segments::delete_segments::DeleteSegmentsCmd;
@@ -302,19 +304,51 @@ fn get_command(
             )),
         },
         Command::ConsumerOffset(command) => match command {
-            ConsumerOffsetAction::Get(get_args) => Box::new(GetConsumerOffsetCmd::new(
-                get_args.consumer_id.clone(),
-                get_args.stream_id.clone(),
-                get_args.topic_id.clone(),
-                get_args.partition_id,
-            )),
-            ConsumerOffsetAction::Set(set_args) => Box::new(SetConsumerOffsetCmd::new(
-                set_args.consumer_id.clone(),
-                set_args.stream_id.clone(),
-                set_args.topic_id.clone(),
-                set_args.partition_id,
-                set_args.offset,
-            )),
+            ConsumerOffsetAction::Get(get_args) => {
+                let consumer_kind = match get_args.kind {
+                    Some(kind) => kind.into(),
+                    None => ConsumerKind::Consumer,
+                };
+
+                let partition_id = match (consumer_kind, get_args.partition_id) {
+                    (ConsumerKind::Consumer, None) => {
+                        eprintln!("Error: Partition ID is required for regular consumers");
+                        std::process::exit(1);
+                    }
+                    (ConsumerKind::Consumer, Some(id)) => Some(id),
+                    (ConsumerKind::ConsumerGroup, id) => id,
+                };
+                Box::new(GetConsumerOffsetCmd::new(
+                    get_args.consumer_id.clone(),
+                    get_args.stream_id.clone(),
+                    get_args.topic_id.clone(),
+                    partition_id,
+                    consumer_kind,
+                ))
+            }
+            ConsumerOffsetAction::Set(set_args) => {
+                let consumer_kind = match set_args.kind {
+                    Some(kind) => kind.into(),
+                    None => ConsumerKind::Consumer,
+                };
+
+                let partition_id = match (consumer_kind, set_args.partition_id) {
+                    (ConsumerKind::Consumer, None) => {
+                        eprintln!("Error: Partition ID is required for regular consumers");
+                        std::process::exit(1);
+                    }
+                    (ConsumerKind::Consumer, Some(id)) => Some(id),
+                    (ConsumerKind::ConsumerGroup, id) => id,
+                };
+                Box::new(SetConsumerOffsetCmd::new(
+                    set_args.consumer_id.clone(),
+                    set_args.stream_id.clone(),
+                    set_args.topic_id.clone(),
+                    partition_id,
+                    set_args.offset,
+                    consumer_kind,
+                ))
+            }
         },
         Command::Context(command) => match command {
             ContextAction::List(list_args) => {
